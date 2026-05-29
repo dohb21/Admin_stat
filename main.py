@@ -507,7 +507,7 @@ def main() -> None:
         # PDF 생성
         html_report = build_html_report(headers, rows, top5, top10, chart_paths=chart_paths)
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        pdf_path = os.path.join(OUTPUT_DIR, f"{timestamp}_report.pdf")
+        pdf_path = os.path.join(OUTPUT_DIR, f"dream_{timestamp[:8]}.pdf")
         print("PDF 생성 중...")
         try:
             save_html_as_pdf(driver, html_report, pdf_path)
