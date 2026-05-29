@@ -1,150 +1,173 @@
 from datetime import datetime
 
 
-def build_html_report(headers, rows, top5, top10) -> str:
-    """HTML 형식의 상세 리포트"""
+def build_html_report(headers, rows, top5, top10, chart_paths=None) -> str:
+    """HTML 형식의 리포트 — PDF 1페이지 최적화"""
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S (KST)")
 
     html = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Onuri Admin 현황 리포트</title>
+    <title>드림몰 현황 리포트</title>
     <style>
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            max-width: 1000px;
+            font-family: 'Malgun Gothic', -apple-system, BlinkMacSystemFont, sans-serif;
+            max-width: 980px;
             margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
+            padding: 14px;
+            background: #f5f5f5;
+            font-size: 12px;
             color: #333;
         }}
         h1 {{
+            font-size: 16px;
             border-bottom: 3px solid #007bff;
-            padding-bottom: 10px;
+            padding-bottom: 5px;
             color: #007bff;
+            margin-bottom: 7px;
         }}
         h2 {{
+            font-size: 12px;
             border-left: 4px solid #007bff;
-            padding-left: 10px;
-            margin-top: 30px;
+            padding-left: 7px;
+            margin: 10px 0 5px;
+            font-weight: bold;
+        }}
+        h3 {{
+            font-size: 11px;
+            color: #555;
+            margin-bottom: 3px;
         }}
         .meta {{
-            background-color: #e7f3ff;
-            padding: 10px 15px;
-            border-radius: 5px;
-            margin-bottom: 20px;
+            background: #e7f3ff;
+            padding: 4px 10px;
+            border-radius: 4px;
+            margin-bottom: 9px;
+            font-size: 11px;
         }}
         table {{
             width: 100%;
             border-collapse: collapse;
-            background-color: white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin: 20px 0;
+            background: white;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+            margin-bottom: 10px;
         }}
         th {{
-            background-color: #004085;
+            background: #004085;
             color: white;
-            padding: 12px;
+            padding: 5px 5px;
             text-align: center;
-            font-weight: bold;
-            font-size: 14px;
+            font-size: 10.5px;
+            white-space: nowrap;
         }}
         td {{
-            padding: 10px 12px;
-            border-bottom: 1px solid #ddd;
+            padding: 4px 5px;
+            border-bottom: 1px solid #eee;
             text-align: center;
+            font-size: 10.5px;
         }}
-        tr:hover {{
-            background-color: #f9f9f9;
+        tr:last-child td {{ border-bottom: none; }}
+        .two-col {{
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
         }}
-        tr:last-child td {{
-            border-bottom: none;
+        .two-col > div {{
+            flex: 1;
+            background: white;
+            padding: 8px 10px;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12);
         }}
-        .list {{
-            background-color: white;
-            padding: 15px;
-            border-radius: 5px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        .two-col ol {{
+            margin: 4px 0 0;
+            padding-left: 16px;
         }}
-        .list ol {{
-            margin: 10px 0;
-            padding-left: 20px;
+        .two-col li {{
+            margin: 2px 0;
+            line-height: 1.5;
+            font-size: 11px;
         }}
-        .list li {{
-            margin: 8px 0;
-            line-height: 1.6;
+        .chart-item {{
+            background: white;
+            padding: 6px 8px;
+            border-radius: 4px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+            margin-bottom: 8px;
         }}
-        .empty {{
-            color: #999;
-            font-style: italic;
+        .chart-item img {{
+            max-width: 100%;
+            display: block;
+        }}
+        .empty {{ color: #999; font-style: italic; font-size: 11px; }}
+        @media print {{
+            body {{ background: white; padding: 0; }}
         }}
     </style>
 </head>
 <body>
-    <h1>📊 Onuri Admin 현황 리포트</h1>
-    <div class="meta">
-        <strong>실행:</strong> {now}
-    </div>
+    <h1>드림몰 현황 리포트</h1>
+    <div class="meta"><strong>실행:</strong> {now}</div>
 
-    <h2>📈 로그인/신규회원 Summary (최근 1주)</h2>
+    <h2>로그인/신규회원 Summary (최근 1주)</h2>
 """
 
     # 테이블
     if headers and rows:
-        html += """    <table>
-        <thead>
-            <tr>
-"""
+        html += "    <table>\n        <thead><tr>\n"
         for header in headers:
-            html += f"                <th>{header}</th>\n"
-        html += """            </tr>
-        </thead>
-        <tbody>
-"""
+            html += f"            <th>{header}</th>\n"
+        html += "        </tr></thead>\n        <tbody>\n"
         for row in rows:
-            html += "            <tr>\n"
+            html += "        <tr>\n"
             for cell in row:
-                html += f"                <td>{cell}</td>\n"
-            html += "            </tr>\n"
-        html += """        </tbody>
-    </table>
-"""
+                html += f"            <td>{cell}</td>\n"
+            html += "        </tr>\n"
+        html += "        </tbody>\n    </table>\n"
     else:
         html += '    <p class="empty">데이터 없음</p>\n'
 
-    # TOP 5 상품
-    html += """
-    <h2>🏆 TOP 5 상품 (최근 1주)</h2>
-    <div class="list">
-"""
+    # TOP 5 + TOP 10 (좌우 2분할)
+    html += '    <div class="two-col">\n'
+
+    html += '        <div>\n            <h2>TOP 5 상품 (최근 1주)</h2>\n'
     if top5:
-        html += "        <ol>\n"
+        html += "            <ol>\n"
         for num, name in top5:
-            html += f"            <li>{name}</li>\n"
-        html += "        </ol>\n"
+            html += f"                <li>{name}</li>\n"
+        html += "            </ol>\n"
     else:
-        html += '        <p class="empty">데이터 없음</p>\n'
-    html += "    </div>\n"
+        html += '            <p class="empty">데이터 없음</p>\n'
+    html += "        </div>\n"
 
-    # TOP 10 검색키워드
-    html += """
-    <h2>🔍 TOP 10 검색키워드 (최근 1주)</h2>
-    <div class="list">
-"""
+    html += '        <div>\n            <h2>TOP 10 검색키워드 (최근 1주)</h2>\n'
     if top10:
-        html += "        <ol>\n"
+        html += "            <ol>\n"
         for num, kw in top10:
-            html += f"            <li>{kw}</li>\n"
-        html += "        </ol>\n"
+            html += f"                <li>{kw}</li>\n"
+        html += "            </ol>\n"
     else:
-        html += '        <p class="empty">데이터 없음</p>\n'
+        html += '            <p class="empty">데이터 없음</p>\n'
+    html += "        </div>\n"
+
     html += "    </div>\n"
 
-    html += """
-</body>
-</html>
+    # 주문/클레임 차트 (3분할 가로 배치)
+    html += "    <h2>주문/클레임 차트 (최근 2주)</h2>\n"
+    label_map = {"order_amount": "주문금액", "order_count": "주문수량", "claim": "클레임"}
+    if chart_paths:
+        for key in ("order_amount", "order_count", "claim"):
+            if key in chart_paths:
+                label = label_map[key]
+                html += f"""    <div class="chart-item">
+        <h3>{label}</h3>
+        <img src="{chart_paths[key]}" alt="{label} 차트">
+    </div>
 """
+    else:
+        html += '    <p class="empty">차트 데이터 없음</p>\n'
 
+    html += "</body>\n</html>\n"
     return html

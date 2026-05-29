@@ -7,7 +7,7 @@ def build_dooray_message(headers, rows, top5, top10) -> str:
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S (KST)")
 
     lines = [
-        "✅ Onuri Admin 통계 생성 완료",
+        "✅ 드림몰 통계 생성 완료",
         f"실행: {now}",
     ]
 

@@ -1,3 +1,4 @@
+import base64
 import os
 import sys
 import time
@@ -14,7 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from tabulate import tabulate
 
-from report import build_markdown_report, build_dooray_message, build_html_report
+from report import build_html_report
 from report.dooray import send_to_dooray
 from config import get_dooray_config
 
@@ -293,35 +294,181 @@ def fetch_lists_from_page(driver: webdriver.Chrome, debug: bool = False) -> tupl
 
 
 
-def save_report(markdown_text: str, html_text: str, dooray_text: str) -> dict:
-    """모든 형식의 리포트를 저장하고 경로 반환"""
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+def _capture_canvas(driver: webdriver.Chrome, canvas_id: str, fpath: str, debug: bool = False) -> bool:
+    """canvas를 PNG로 저장: toDataURL 1차 시도, 실패 시 element screenshot"""
+    # 1차: toDataURL
+    try:
+        data_url = driver.execute_script(
+            f"var c = document.getElementById('{canvas_id}');"
+            "return c ? c.toDataURL('image/png') : null;"
+        )
+        if data_url and data_url.startswith("data:image/png;base64,"):
+            img_data = base64.b64decode(data_url.split(",", 1)[1])
+            with open(fpath, "wb") as f:
+                f.write(img_data)
+            if debug:
+                print(f"[디버그] {canvas_id} → {fpath} (toDataURL)")
+            return True
+    except Exception as e:
+        if debug:
+            print(f"[디버그] {canvas_id} toDataURL 실패: {e}")
 
-    paths = {}
+    # 2차: element screenshot
+    try:
+        el = driver.find_element(By.ID, canvas_id)
+        driver.execute_script("arguments[0].scrollIntoView(true);", el)
+        time.sleep(0.3)
+        el.screenshot(fpath)
+        if debug:
+            print(f"[디버그] {canvas_id} → {fpath} (element screenshot)")
+        return True
+    except Exception as e:
+        if debug:
+            print(f"[디버그] {canvas_id} element screenshot 실패: {e}")
 
-    # 마크다운
-    md_fname = f"{timestamp}_report.md"
-    md_fpath = os.path.join(OUTPUT_DIR, md_fname)
-    with open(md_fpath, "w", encoding="utf-8") as f:
-        f.write(markdown_text)
-    paths["markdown"] = md_fpath
+    return False
 
-    # HTML
-    html_fname = f"{timestamp}_report.html"
-    html_fpath = os.path.join(OUTPUT_DIR, html_fname)
-    with open(html_fpath, "w", encoding="utf-8") as f:
-        f.write(html_text)
-    paths["html"] = html_fpath
 
-    # 두레이
-    dooray_fname = f"{timestamp}_dooray.txt"
-    dooray_fpath = os.path.join(OUTPUT_DIR, dooray_fname)
-    with open(dooray_fpath, "w", encoding="utf-8") as f:
-        f.write(dooray_text)
-    paths["dooray"] = dooray_fpath
+def _capture_element(driver: webdriver.Chrome, css_selector: str, fpath: str, debug: bool = False) -> bool:
+    """CSS 선택자로 특정 div 영역을 screenshot으로 저장"""
+    try:
+        el = driver.find_element(By.CSS_SELECTOR, css_selector)
+        driver.execute_script("arguments[0].scrollIntoView(true);", el)
+        time.sleep(0.3)
+        el.screenshot(fpath)
+        if debug:
+            print(f"[디버그] {css_selector} → {fpath} (div screenshot)")
+        return True
+    except Exception as e:
+        if debug:
+            print(f"[디버그] {css_selector} div screenshot 실패: {e}")
+        return False
 
-    return paths
+
+def fetch_order_claim_charts(
+    driver: webdriver.Chrome, timestamp: str, output_dir: str, debug: bool = False
+) -> dict:
+    """주문/클레임 차트 3종(주문금액·주문수량·클레임)을 캡처하여 PNG로 저장"""
+    chart_dir = os.path.join(output_dir, "charts")
+    os.makedirs(chart_dir, exist_ok=True)
+    result = {}
+
+    # myChart3가 있는 iframe을 탐색하여 전환
+    driver.switch_to.default_content()
+    frames = driver.find_elements(By.TAG_NAME, "iframe")
+    if debug:
+        print(f"[디버그] iframe 수: {len(frames)}")
+
+    frame_found = False
+    for i, frame in enumerate(frames):
+        try:
+            driver.switch_to.frame(frame)
+            if driver.find_elements(By.ID, "myChart3"):
+                if debug:
+                    print(f"[디버그] iframe[{i}]에서 myChart3 발견")
+                frame_found = True
+                break
+            driver.switch_to.default_content()
+        except Exception as e:
+            if debug:
+                print(f"[디버그] iframe[{i}] 전환 실패: {e}")
+            driver.switch_to.default_content()
+
+    if not frame_found:
+        driver.switch_to.default_content()
+        if driver.find_elements(By.ID, "myChart3"):
+            frame_found = True
+            if debug:
+                print("[디버그] 최상위 frame에서 myChart3 발견")
+
+    if not frame_found:
+        if debug:
+            print("[디버그] myChart3를 어떤 frame에서도 찾지 못함")
+        return result
+
+    # 차트 데이터 로드 트리거 후 렌더링 대기
+    try:
+        driver.execute_script(
+            "if(typeof getOrderChart==='function') getOrderChart();"
+            "if(typeof getClaimChart==='function') getClaimChart();"
+        )
+        time.sleep(3)
+    except Exception:
+        pass
+
+    # 주문금액 (tab2-1, 기본 표시)
+    fpath = os.path.join(chart_dir, f"{timestamp}_order_amount.png")
+    if _capture_canvas(driver, "myChart3", fpath, debug):
+        result["order_amount"] = fpath
+
+    # 주문수량 탭 전환
+    try:
+        btn = driver.find_element(By.CSS_SELECTOR, "button[data-tab='tab2-2']")
+        driver.execute_script("arguments[0].click();", btn)
+        time.sleep(1)
+        fpath = os.path.join(chart_dir, f"{timestamp}_order_count.png")
+        if _capture_canvas(driver, "myChart4", fpath, debug):
+            result["order_count"] = fpath
+    except Exception as e:
+        if debug:
+            print(f"[디버그] 주문수량 탭: {e}")
+
+    # 클레임 탭 전환 — canvas + 전체 탭 div 모두 캡처
+    try:
+        btn = driver.find_element(By.CSS_SELECTOR, "button[data-tab='tab2-3']")
+        driver.execute_script("arguments[0].click();", btn)
+        time.sleep(1)
+        fpath = os.path.join(chart_dir, f"{timestamp}_claim.png")
+        # canvas 먼저, 안 되면 tab2-3 div 전체 캡처
+        if not _capture_canvas(driver, "myChart5", fpath, debug):
+            _capture_element(driver, "#tab2-3", fpath, debug)
+        if os.path.exists(fpath):
+            result["claim"] = fpath
+    except Exception as e:
+        if debug:
+            print(f"[디버그] 클레임 탭: {e}")
+
+    driver.switch_to.default_content()
+    return result
+
+
+def save_html_as_pdf(driver: webdriver.Chrome, html_content: str, pdf_path: str) -> None:
+    """HTML 문자열을 A4 PDF로 변환 — 임시 HTML 파일 사용 후 삭제"""
+    import tempfile
+    pdf_dir = os.path.dirname(os.path.abspath(pdf_path))
+    os.makedirs(pdf_dir, exist_ok=True)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".html", encoding="utf-8",
+            delete=False, dir=pdf_dir
+        ) as f:
+            f.write(html_content)
+            tmp_path = f.name
+
+        abs_html = tmp_path.replace("\\", "/")
+        driver.get(f"file:///{abs_html}")
+        time.sleep(1)
+
+        result = driver.execute_cdp_cmd("Page.printToPDF", {
+            "paperWidth": 8.27,
+            "paperHeight": 11.69,
+            "marginTop": 0.4,
+            "marginBottom": 0.4,
+            "marginLeft": 0.4,
+            "marginRight": 0.4,
+            "printBackground": True,
+            "displayHeaderFooter": False,
+            "preferCSSPageSize": False,
+            "scale": 0.8,
+        })
+
+        pdf_data = base64.b64decode(result["data"])
+        with open(pdf_path, "wb") as f:
+            f.write(pdf_data)
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 def main() -> None:
@@ -342,46 +489,47 @@ def main() -> None:
         wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
         time.sleep(5)  # easyui 초기화 및 JS 함수 등록 대기
 
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
         print("Summary 데이터 수집 중...")
         headers, rows = fetch_summary_table(driver)
 
         print("상품/키워드 데이터 수집 중...")
         top5, top10 = fetch_lists_from_page(driver, debug=debug)
 
-        # 리포트 생성
-        markdown_report = build_markdown_report(headers, rows, top5, top10)
-        html_report = build_html_report(headers, rows, top5, top10)
-        dooray_message = build_dooray_message(headers, rows, top5, top10)
+        print("주문/클레임 차트 캡처 중...")
+        chart_paths_abs = fetch_order_claim_charts(driver, timestamp, OUTPUT_DIR, debug=debug)
+        chart_paths = {
+            k: os.path.relpath(v, OUTPUT_DIR).replace("\\", "/")
+            for k, v in chart_paths_abs.items()
+        }
 
-        # 콘솔에 두레이 메시지 출력
-        print("\n" + "=" * 70)
-        print("[두레이 메신저 발송 메시지]")
-        print("=" * 70)
-        print(dooray_message)
-        print("=" * 70 + "\n")
-
-        # 파일 저장
-        paths = save_report(markdown_report, html_report, dooray_message)
-        print("✅ 리포트 생성 완료:")
-        print(f"  - 마크다운: {paths['markdown']}")
-        print(f"  - HTML: {paths['html']}")
-        print(f"  - 두레이: {paths['dooray']}")
+        # PDF 생성
+        html_report = build_html_report(headers, rows, top5, top10, chart_paths=chart_paths)
+        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        pdf_path = os.path.join(OUTPUT_DIR, f"{timestamp}_report.pdf")
+        print("PDF 생성 중...")
+        try:
+            save_html_as_pdf(driver, html_report, pdf_path)
+            print(f"✅ 리포트 생성 완료: {pdf_path}")
+        except Exception as e:
+            print(f"⚠️ PDF 생성 실패: {e}")
 
         # 두레이로 발송
-        dooray_config = get_dooray_config()
-        if dooray_config and dooray_config.get("webhook_url"):
-            print("\n📤 두레이 메신저로 발송 중...")
-            success = send_to_dooray(
-                dooray_message,
-                dooray_config["webhook_url"],
-                dooray_config.get("bot_name", "Admin 통계봇"),
-            )
-            if success:
-                print("✅ 두레이 메신저 발송 완료!")
-            else:
-                print("❌ 두레이 메신저 발송 실패")
-        else:
-            print("\n⚠️ 두레이 설정이 없습니다. (config.yml 확인)")
+        # dooray_config = get_dooray_config()
+        # if dooray_config and dooray_config.get("webhook_url"):
+        #     print("\n📤 두레이 메신저로 발송 중...")
+        #     success = send_to_dooray(
+        #         dooray_message,
+        #         dooray_config["webhook_url"],
+        #         dooray_config.get("bot_name", "Admin 통계봇"),
+        #     )
+        #     if success:
+        #         print("✅ 두레이 메신저 발송 완료!")
+        #     else:
+        #         print("❌ 두레이 메신저 발송 실패")
+        # else:
+        #     print("\n⚠️ 두레이 설정이 없습니다. (config.yml 확인)")
 
 
     except RuntimeError as e:
