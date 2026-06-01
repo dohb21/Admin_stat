@@ -15,7 +15,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from tabulate import tabulate
 
-from report import build_html_report
+from report import (
+    build_html_report,
+    build_email_html, send_email,
+    build_sms_text, send_sms,
+    build_kakao_text, send_kakao,
+)
 from report.dooray import send_to_dooray
 from config import get_dooray_config
 
@@ -514,6 +519,42 @@ def main() -> None:
             print(f"✅ 리포트 생성 완료: {pdf_path}")
         except Exception as e:
             print(f"⚠️ PDF 생성 실패: {e}")
+
+        today_str = datetime.now().strftime("%Y년 %m월 %d일")
+
+        # ── 이메일 발송 ────────────────────────────────────────────────────────
+        email_to = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
+        if email_to:
+            print("\n📧 이메일 발송 중...")
+            email_html = build_email_html(
+                headers, rows, top5, top10,
+                chart_keys=list(chart_paths_abs.keys()),
+            )
+            ok = send_email(
+                subject=f"[드림몰] Admin 통계 리포트 - {today_str}",
+                html_body=email_html,
+                to_addrs=email_to,
+                chart_paths=chart_paths_abs,
+            )
+            print(f"{'✅ 이메일 발송 완료' if ok else '❌ 이메일 발송 실패'} → {', '.join(email_to)}")
+
+        # ── SMS 발송 ──────────────────────────────────────────────────────────
+        sms_to = [n.strip() for n in os.getenv("SMS_TO", "").split(",") if n.strip()]
+        if sms_to:
+            print("\n💬 SMS 발송 중...")
+            sms_text = build_sms_text(headers, rows, top5, top10)
+            ok = send_sms(sms_text, sms_to)
+            print(f"{'✅ SMS 발송 완료' if ok else '❌ SMS 발송 실패'} → {', '.join(sms_to)}")
+
+        # ── 카카오톡 발송 ─────────────────────────────────────────────────────
+        kakao_to = [n.strip() for n in os.getenv("KAKAO_TO", "").split(",") if n.strip()]
+        if kakao_to:
+            print("\n🟡 카카오톡 발송 중...")
+            kakao_text = build_kakao_text(headers, rows, top5, top10)
+            # 대표 차트 1장 (주문금액)만 첨부; 없으면 텍스트만 발송
+            kakao_image = chart_paths_abs.get("order_amount")
+            ok = send_kakao(kakao_text, kakao_to, image_path=kakao_image)
+            print(f"{'✅ 카카오톡 발송 완료' if ok else '❌ 카카오톡 발송 실패'} → {', '.join(kakao_to)}")
 
         # 두레이로 발송
         # dooray_config = get_dooray_config()
