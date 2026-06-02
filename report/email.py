@@ -3,7 +3,7 @@ import smtplib
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # chart_paths_abs 의 key → CID 매핑
 _CID = {
@@ -21,7 +21,7 @@ _CHART_LABEL = {
 def build_email_html(
     headers: list, rows: list, top5: list, top10: list, chart_keys: list = None
 ) -> str:
-    today = datetime.now().strftime("%Y년 %m월 %d일")
+    today = (datetime.now() - timedelta(days=1)).strftime("%Y년 %m월 %d일")
     chart_keys = chart_keys or []
 
     th_cells = "".join(f"<th>{h}</th>" for h in headers)
@@ -59,13 +59,21 @@ def build_email_html(
   .hd h1{{margin:0;font-size:20px}} .hd p{{margin:4px 0 0;font-size:12px;opacity:.85}}
   .sec{{padding:20px 28px;border-bottom:1px solid #eee}}
   h2{{font-size:15px;color:#1a73e8;margin:0 0 12px}} h3.chart-title{{font-size:13px;color:#555;margin:0 0 8px}}
+  .tbl-wrap{{overflow-x:auto;-webkit-overflow-scrolling:touch}}
   table{{width:100%;border-collapse:collapse;font-size:12px}}
   th{{background:#1a73e8;color:#fff;padding:7px 8px;text-align:center;white-space:nowrap}}
   td{{padding:6px 8px;border-bottom:1px solid #eee;text-align:center}}
   tr:nth-child(even) td{{background:#f9f9f9}}
-  .two-col{{display:flex;gap:20px}} .two-col>div{{flex:1}}
+  .two-col{{display:flex;gap:20px}} .two-col>div:first-child{{flex:2}} .two-col>div:last-child{{flex:1}}
   .chart-block{{margin-bottom:20px}}
   .ft{{padding:14px 28px;font-size:11px;color:#999;text-align:center}}
+  @media (max-width:600px){{
+    body{{padding:0}}
+    .wrap{{border-radius:0;box-shadow:none}}
+    .sec{{padding:16px}}
+    .two-col{{flex-direction:column}}
+    .two-col>div:first-child,.two-col>div:last-child{{flex:unset}}
+  }}
 </style>
 </head>
 <body>
@@ -73,8 +81,9 @@ def build_email_html(
   <div class="hd"><h1>드림몰 Admin 통계 리포트</h1><p>{today} 기준</p></div>
 
   <div class="sec">
-    <h2>판매 통계 요약</h2>
-    <table><thead><tr>{th_cells}</tr></thead><tbody>{table_rows}</tbody></table>
+    <h2>로그인 / 신규 회원</h2>
+    <p style="margin:0 0 10px;font-size:11px;color:#999">※ 내용이 잘린 경우 표를 좌우로 스크롤하여 확인하세요.</p>
+    <div class="tbl-wrap"><table><thead><tr>{th_cells}</tr></thead><tbody>{table_rows}</tbody></table></div>
   </div>
 
   {"<div class='sec'><h2>차트</h2>" + chart_html + "</div>" if chart_html else ""}

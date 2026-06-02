@@ -1,6 +1,9 @@
 import base64
 import os
 import sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
+
 import time
 from datetime import datetime, timedelta
 
@@ -197,12 +200,13 @@ def fetch_summary_table(driver: webdriver.Chrome):
 
     today = datetime.now()
     col_headers = ["구분"]
-    for i in range(7, 0, -1):
+    for i in range(7, 1, -1):
         col_headers.append((today - timedelta(days=i)).strftime("%m/%d"))
-    col_headers += ["금일", "전일 대비", "당월 누적"]
+    col_headers.append((today - timedelta(days=1)).strftime("%m/%d(전일)"))
+    col_headers += ["전일 대비", "당월 누적"]
 
     keys = ["name", "d7Total", "d6Total", "d5Total", "d4Total", "d3Total",
-            "d2Total", "d1Total", "d0Total", "dbTotal", "daTotal"]
+            "d2Total", "d1Total", "dbTotal", "daTotal"]
     rows = [[str(row.get(k, "")) for k in keys] for row in data.get("rows", [])]
     return col_headers, rows
 
@@ -516,16 +520,16 @@ def main() -> None:
         print("PDF 생성 중...")
         try:
             save_html_as_pdf(driver, html_report, pdf_path)
-            print(f"✅ 리포트 생성 완료: {pdf_path}")
+            print(f"리포트 생성 완료: {pdf_path}")
         except Exception as e:
-            print(f"⚠️ PDF 생성 실패: {e}")
+            print(f"PDF 생성 실패: {e}")
 
-        today_str = datetime.now().strftime("%Y년 %m월 %d일")
+        today_str = (datetime.now() - timedelta(days=1)).strftime("%Y년 %m월 %d일")
 
         # ── 이메일 발송 ────────────────────────────────────────────────────────
         email_to = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
         if email_to:
-            print("\n📧 이메일 발송 중...")
+            print("\n이메일 발송 중...")
             email_html = build_email_html(
                 headers, rows, top5, top10,
                 chart_keys=list(chart_paths_abs.keys()),
@@ -536,41 +540,41 @@ def main() -> None:
                 to_addrs=email_to,
                 chart_paths=chart_paths_abs,
             )
-            print(f"{'✅ 이메일 발송 완료' if ok else '❌ 이메일 발송 실패'} → {', '.join(email_to)}")
+            print(f"{'이메일 발송 완료' if ok else '이메일 발송 실패'} → {', '.join(email_to)}")
 
         # ── SMS 발송 ──────────────────────────────────────────────────────────
         sms_to = [n.strip() for n in os.getenv("SMS_TO", "").split(",") if n.strip()]
         if sms_to:
-            print("\n💬 SMS 발송 중...")
+            print("\nSMS 발송 중...")
             sms_text = build_sms_text(headers, rows, top5, top10)
             ok = send_sms(sms_text, sms_to)
-            print(f"{'✅ SMS 발송 완료' if ok else '❌ SMS 발송 실패'} → {', '.join(sms_to)}")
+            print(f"{'SMS 발송 완료' if ok else 'SMS 발송 실패'} → {', '.join(sms_to)}")
 
         # ── 카카오톡 발송 ─────────────────────────────────────────────────────
         kakao_to = [n.strip() for n in os.getenv("KAKAO_TO", "").split(",") if n.strip()]
         if kakao_to:
-            print("\n🟡 카카오톡 발송 중...")
+            print("\n카카오톡 발송 중...")
             kakao_text = build_kakao_text(headers, rows, top5, top10)
             # 대표 차트 1장 (주문금액)만 첨부; 없으면 텍스트만 발송
             kakao_image = chart_paths_abs.get("order_amount")
             ok = send_kakao(kakao_text, kakao_to, image_path=kakao_image)
-            print(f"{'✅ 카카오톡 발송 완료' if ok else '❌ 카카오톡 발송 실패'} → {', '.join(kakao_to)}")
+            print(f"{'카카오톡 발송 완료' if ok else '카카오톡 발송 실패'} → {', '.join(kakao_to)}")
 
         # 두레이로 발송
         # dooray_config = get_dooray_config()
         # if dooray_config and dooray_config.get("webhook_url"):
-        #     print("\n📤 두레이 메신저로 발송 중...")
+        #     print("\n두레이 메신저로 발송 중...")
         #     success = send_to_dooray(
         #         dooray_message,
         #         dooray_config["webhook_url"],
         #         dooray_config.get("bot_name", "Admin 통계봇"),
         #     )
         #     if success:
-        #         print("✅ 두레이 메신저 발송 완료!")
+        #         print("두레이 메신저 발송 완료!")
         #     else:
-        #         print("❌ 두레이 메신저 발송 실패")
+        #         print("두레이 메신저 발송 실패")
         # else:
-        #     print("\n⚠️ 두레이 설정이 없습니다. (config.yml 확인)")
+        #     print("\n두레이 설정이 없습니다. (config.yml 확인)")
 
 
     except RuntimeError as e:
