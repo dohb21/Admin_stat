@@ -7,14 +7,11 @@ from datetime import datetime, timedelta
 
 # chart_paths_abs 의 key → CID 매핑
 _CID = {
-    "order_amount": "chart_order_amount",
-    "order_count": "chart_order_count",
-    "claim": "chart_claim",
+    "charts": "chart_combined",
+    "report": "report_image",
 }
 _CHART_LABEL = {
-    "order_amount": "주문금액",
-    "order_count": "주문수량",
-    "claim": "클레임",
+    "charts": "주문/클레임 차트",
 }
 
 
@@ -101,6 +98,33 @@ def build_email_html(
     </div>
   </div>
 
+  <div class="ft">자동 발송 메일입니다 · 드림몰 Admin 통계봇</div>
+</div>
+</body>
+</html>"""
+
+
+def build_report_image_html() -> str:
+    today = (datetime.now() - timedelta(days=1)).strftime("%Y년 %m월 %d일")
+    return f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<style>
+  body{{font-family:'Malgun Gothic',sans-serif;margin:0;padding:20px;background:#f1f5f9}}
+  .wrap{{max-width:680px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.12)}}
+  .hd{{background:#1e293b;color:#fff;padding:16px 24px}}
+  .hd h1{{margin:0;font-size:18px}} .hd p{{margin:4px 0 0;font-size:11px;opacity:.8}}
+  .body{{padding:20px 24px;text-align:center}}
+  .ft{{padding:12px 24px;font-size:11px;color:#999;text-align:center}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hd"><h1>드림몰 Admin 통계 리포트</h1><p>{today} 기준</p></div>
+  <div class="body">
+    <img src="cid:report_image" alt="드림몰 통계 리포트" style="max-width:100%;border-radius:4px;">
+  </div>
   <div class="ft">자동 발송 메일입니다 · 드림몰 Admin 통계봇</div>
 </div>
 </body>

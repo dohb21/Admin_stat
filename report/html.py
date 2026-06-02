@@ -111,7 +111,7 @@ def build_html_report(headers, rows, top5, top10, chart_paths=None) -> str:
     <h1>드림몰 현황 리포트</h1>
     <div class="meta"><strong>실행:</strong> {now}</div>
 
-    <h2>로그인/신규회원 Summary (최근 1주)</h2>
+    <h2>로그인/신규회원 Summary (최근 3일)</h2>
 """
 
     # 테이블
@@ -135,7 +135,7 @@ def build_html_report(headers, rows, top5, top10, chart_paths=None) -> str:
     html += '        <div>\n            <h2>TOP 5 상품 (최근 1주)</h2>\n'
     if top5:
         html += "            <ol>\n"
-        for num, name in top5:
+        for _, name in top5:
             html += f"                <li>{name}</li>\n"
         html += "            </ol>\n"
     else:
@@ -145,7 +145,7 @@ def build_html_report(headers, rows, top5, top10, chart_paths=None) -> str:
     html += '        <div>\n            <h2>TOP 10 검색키워드 (최근 1주)</h2>\n'
     if top10:
         html += "            <ol>\n"
-        for num, kw in top10:
+        for _, kw in top10:
             html += f"                <li>{kw}</li>\n"
         html += "            </ol>\n"
     else:
@@ -154,16 +154,11 @@ def build_html_report(headers, rows, top5, top10, chart_paths=None) -> str:
 
     html += "    </div>\n"
 
-    # 주문/클레임 차트 (3분할 가로 배치)
-    html += "    <h2>주문/클레임 차트 (최근 2주)</h2>\n"
-    label_map = {"order_amount": "주문금액", "order_count": "주문수량", "claim": "클레임"}
-    if chart_paths:
-        for key in ("order_amount", "order_count", "claim"):
-            if key in chart_paths:
-                label = label_map[key]
-                html += f"""    <div class="chart-item">
-        <h3>{label}</h3>
-        <img src="{chart_paths[key]}" alt="{label} 차트">
+    # 주문/클레임 차트
+    html += "    <h2>주문/클레임 차트 (최근 3일)</h2>\n"
+    if chart_paths and "charts" in chart_paths:
+        html += f"""    <div class="chart-item">
+        <img src="{chart_paths['charts']}" alt="주문/클레임 차트">
     </div>
 """
     else:

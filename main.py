@@ -18,14 +18,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 from tabulate import tabulate
 
+from chart_builder import draw_combined_a5, draw_report_image
 from report import (
     build_html_report,
-    build_email_html, send_email,
-    build_sms_text, send_sms,
+    build_report_image_html, send_email,
     build_kakao_text, send_kakao,
 )
-from report.dooray import send_to_dooray
-from config import get_dooray_config
 
 load_dotenv()
 
@@ -199,15 +197,25 @@ def fetch_summary_table(driver: webdriver.Chrome):
     data = resp.json()
 
     today = datetime.now()
-    col_headers = ["구분"]
-    for i in range(7, 1, -1):
-        col_headers.append((today - timedelta(days=i)).strftime("%m/%d"))
-    col_headers.append((today - timedelta(days=1)).strftime("%m/%d(전일)"))
-    col_headers += ["전일 대비", "당월 누적"]
+    col_headers = ["구분",
+                   (today - timedelta(days=3)).strftime("%m/%d"),
+                   (today - timedelta(days=2)).strftime("%m/%d"),
+                   (today - timedelta(days=1)).strftime("%m/%d(전일)"),
+                   "당월 누적"]
 
-    keys = ["name", "d7Total", "d6Total", "d5Total", "d4Total", "d3Total",
-            "d2Total", "d1Total", "dbTotal", "daTotal"]
-    rows = [[str(row.get(k, "")) for k in keys] for row in data.get("rows", [])]
+    def _monthly_excl_today(row):
+        try:
+            da = int(row.get("daTotal", 0) or 0)
+            d0 = int(row.get("d0Total", 0) or 0)
+            return str(da - d0)
+        except (ValueError, TypeError):
+            return str(row.get("daTotal", ""))
+
+    keys = ["name", "d3Total", "d2Total", "d1Total"]
+    rows = [
+        [str(row.get(k, "")) for k in keys] + [_monthly_excl_today(row)]
+        for row in data.get("rows", [])
+    ]
     return col_headers, rows
 
 
@@ -303,142 +311,87 @@ def fetch_lists_from_page(driver: webdriver.Chrome, debug: bool = False) -> tupl
 
 
 
-def _capture_canvas(driver: webdriver.Chrome, canvas_id: str, fpath: str, debug: bool = False) -> bool:
-    """canvas를 PNG로 저장: toDataURL 1차 시도, 실패 시 element screenshot"""
-    # 1차: toDataURL
+def _parse_csv_ints(s: str) -> list[int]:
+    return [int(v.strip()) for v in s.split(",") if v.strip()]
+
+
+def _parse_csv_floats(s: str) -> list[float]:
+    return [float(v.strip()) for v in s.split(",") if v.strip()]
+
+
+def _parse_csv_strs(s: str) -> list[str]:
+    return [v.strip() for v in s.split(",") if v.strip()]
+
+
+
+def fetch_order_chart_data(driver: webdriver.Chrome) -> dict | None:
     try:
-        data_url = driver.execute_script(
-            f"var c = document.getElementById('{canvas_id}');"
-            "return c ? c.toDataURL('image/png') : null;"
+        resp = _req.post(
+            f"{BASE_URL}/main/getOrderChart.do",
+            headers=_api_headers(),
+            cookies=_cookies(driver),
+            timeout=15,
         )
-        if data_url and data_url.startswith("data:image/png;base64,"):
-            img_data = base64.b64decode(data_url.split(",", 1)[1])
-            with open(fpath, "wb") as f:
-                f.write(img_data)
-            if debug:
-                print(f"[디버그] {canvas_id} → {fpath} (toDataURL)")
-            return True
-    except Exception as e:
-        if debug:
-            print(f"[디버그] {canvas_id} toDataURL 실패: {e}")
+        resp.raise_for_status()
+        raw = resp.json()
+        dates = _parse_csv_strs(raw.get("dt", ""))
+        if not dates:
+            return None
+        return {
+            "dates":    dates,
+            "orderAmt": _parse_csv_ints(raw.get("orderAmt", "")),
+            "canAmt":   _parse_csv_ints(raw.get("canAmt",   "")),
+            "retAmt":   _parse_csv_ints(raw.get("retAmt",   "")),
+            "orderCnt": _parse_csv_ints(raw.get("orderCnt", "")),
+            "canCnt":   _parse_csv_ints(raw.get("canCnt",   "")),
+            "retCnt":   _parse_csv_ints(raw.get("retCnt",   "")),
+        }
+    except Exception:
+        return None
 
-    # 2차: element screenshot
+
+def fetch_claim_chart_data(driver: webdriver.Chrome) -> dict | None:
     try:
-        el = driver.find_element(By.ID, canvas_id)
-        driver.execute_script("arguments[0].scrollIntoView(true);", el)
-        time.sleep(0.3)
-        el.screenshot(fpath)
-        if debug:
-            print(f"[디버그] {canvas_id} → {fpath} (element screenshot)")
-        return True
-    except Exception as e:
-        if debug:
-            print(f"[디버그] {canvas_id} element screenshot 실패: {e}")
-
-    return False
-
-
-def _capture_element(driver: webdriver.Chrome, css_selector: str, fpath: str, debug: bool = False) -> bool:
-    """CSS 선택자로 특정 div 영역을 screenshot으로 저장"""
-    try:
-        el = driver.find_element(By.CSS_SELECTOR, css_selector)
-        driver.execute_script("arguments[0].scrollIntoView(true);", el)
-        time.sleep(0.3)
-        el.screenshot(fpath)
-        if debug:
-            print(f"[디버그] {css_selector} → {fpath} (div screenshot)")
-        return True
-    except Exception as e:
-        if debug:
-            print(f"[디버그] {css_selector} div screenshot 실패: {e}")
-        return False
+        resp = _req.post(
+            f"{BASE_URL}/main/getClaimBarChart.do",
+            headers=_api_headers(),
+            cookies=_cookies(driver),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        raw = resp.json()
+        labels = _parse_csv_strs(raw.get("dashSp",   ""))
+        rates  = _parse_csv_floats(raw.get("dashRate", ""))
+        if not labels or not rates:
+            return None
+        return {"labels": labels, "rates": rates}
+    except Exception:
+        return None
 
 
 def fetch_order_claim_charts(
-    driver: webdriver.Chrome, timestamp: str, output_dir: str, debug: bool = False
-) -> dict:
-    """주문/클레임 차트 3종(주문금액·주문수량·클레임)을 캡처하여 PNG로 저장"""
+    driver: webdriver.Chrome, timestamp: str, output_dir: str, debug: bool = False,
+) -> tuple[dict, dict | None, dict | None]:
+    """주문/클레임 차트를 A5 단일 이미지로 생성. (chart_paths, order_data, claim_data) 반환"""
     chart_dir = os.path.join(output_dir, "charts")
     os.makedirs(chart_dir, exist_ok=True)
-    result = {}
 
-    # myChart3가 있는 iframe을 탐색하여 전환
-    driver.switch_to.default_content()
-    frames = driver.find_elements(By.TAG_NAME, "iframe")
-    if debug:
-        print(f"[디버그] iframe 수: {len(frames)}")
-
-    frame_found = False
-    for i, frame in enumerate(frames):
-        try:
-            driver.switch_to.frame(frame)
-            if driver.find_elements(By.ID, "myChart3"):
-                if debug:
-                    print(f"[디버그] iframe[{i}]에서 myChart3 발견")
-                frame_found = True
-                break
-            driver.switch_to.default_content()
-        except Exception as e:
-            if debug:
-                print(f"[디버그] iframe[{i}] 전환 실패: {e}")
-            driver.switch_to.default_content()
-
-    if not frame_found:
-        driver.switch_to.default_content()
-        if driver.find_elements(By.ID, "myChart3"):
-            frame_found = True
-            if debug:
-                print("[디버그] 최상위 frame에서 myChart3 발견")
-
-    if not frame_found:
+    order_data = fetch_order_chart_data(driver)
+    if not order_data:
         if debug:
-            print("[디버그] myChart3를 어떤 frame에서도 찾지 못함")
-        return result
+            print("[디버그] getOrderChart.do 데이터 없음")
+        return {}, None, None
 
-    # 차트 데이터 로드 트리거 후 렌더링 대기
-    try:
-        driver.execute_script(
-            "if(typeof getOrderChart==='function') getOrderChart();"
-            "if(typeof getClaimChart==='function') getClaimChart();"
-        )
-        time.sleep(3)
-    except Exception:
-        pass
+    claim_data = fetch_claim_chart_data(driver)
+    if debug and not claim_data:
+        print("[디버그] getClaimBarChart.do 데이터 없음 (클레임 없음)")
 
-    # 주문금액 (tab2-1, 기본 표시)
-    fpath = os.path.join(chart_dir, f"{timestamp}_order_amount.png")
-    if _capture_canvas(driver, "myChart3", fpath, debug):
-        result["order_amount"] = fpath
-
-    # 주문수량 탭 전환
-    try:
-        btn = driver.find_element(By.CSS_SELECTOR, "button[data-tab='tab2-2']")
-        driver.execute_script("arguments[0].click();", btn)
-        time.sleep(1)
-        fpath = os.path.join(chart_dir, f"{timestamp}_order_count.png")
-        if _capture_canvas(driver, "myChart4", fpath, debug):
-            result["order_count"] = fpath
-    except Exception as e:
+    fpath = os.path.join(chart_dir, f"{timestamp}_charts.png")
+    if draw_combined_a5(order_data, claim_data, fpath):
         if debug:
-            print(f"[디버그] 주문수량 탭: {e}")
-
-    # 클레임 탭 전환 — canvas + 전체 탭 div 모두 캡처
-    try:
-        btn = driver.find_element(By.CSS_SELECTOR, "button[data-tab='tab2-3']")
-        driver.execute_script("arguments[0].click();", btn)
-        time.sleep(1)
-        fpath = os.path.join(chart_dir, f"{timestamp}_claim.png")
-        # canvas 먼저, 안 되면 tab2-3 div 전체 캡처
-        if not _capture_canvas(driver, "myChart5", fpath, debug):
-            _capture_element(driver, "#tab2-3", fpath, debug)
-        if os.path.exists(fpath):
-            result["claim"] = fpath
-    except Exception as e:
-        if debug:
-            print(f"[디버그] 클레임 탭: {e}")
-
-    driver.switch_to.default_content()
-    return result
+            print(f"[디버그] 통합 차트 → {fpath}")
+        return {"charts": fpath}, order_data, claim_data
+    return {}, order_data, claim_data
 
 
 def save_html_as_pdf(driver: webdriver.Chrome, html_content: str, pdf_path: str) -> None:
@@ -506,12 +459,22 @@ def main() -> None:
         print("상품/키워드 데이터 수집 중...")
         top5, top10 = fetch_lists_from_page(driver, debug=debug)
 
-        print("주문/클레임 차트 캡처 중...")
-        chart_paths_abs = fetch_order_claim_charts(driver, timestamp, OUTPUT_DIR, debug=debug)
+        print("주문/클레임 차트 생성 중...")
+        chart_paths_abs, order_data, claim_data = fetch_order_claim_charts(
+            driver, timestamp, OUTPUT_DIR, debug=debug
+        )
         chart_paths = {
             k: os.path.relpath(v, OUTPUT_DIR).replace("\\", "/")
             for k, v in chart_paths_abs.items()
         }
+
+        # 카카오톡 전송용 리포트 이미지 생성
+        kakao_img_path = os.path.join(OUTPUT_DIR, "charts", f"{timestamp}_kakao.png")
+        kakao_ok = draw_report_image(
+            headers, rows, top5, top10, order_data, claim_data, kakao_img_path
+        )
+        if not kakao_ok:
+            kakao_img_path = None
 
         # PDF 생성
         html_report = build_html_report(headers, rows, top5, top10, chart_paths=chart_paths)
@@ -530,34 +493,21 @@ def main() -> None:
         email_to = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
         if email_to:
             print("\n이메일 발송 중...")
-            email_html = build_email_html(
-                headers, rows, top5, top10,
-                chart_keys=list(chart_paths_abs.keys()),
-            )
+            email_html = build_report_image_html()
             ok = send_email(
                 subject=f"[드림몰] Admin 통계 리포트 - {today_str}",
                 html_body=email_html,
                 to_addrs=email_to,
-                chart_paths=chart_paths_abs,
+                chart_paths={"report": kakao_img_path} if kakao_img_path else {},
             )
             print(f"{'이메일 발송 완료' if ok else '이메일 발송 실패'} → {', '.join(email_to)}")
-
-        # ── SMS 발송 ──────────────────────────────────────────────────────────
-        sms_to = [n.strip() for n in os.getenv("SMS_TO", "").split(",") if n.strip()]
-        if sms_to:
-            print("\nSMS 발송 중...")
-            sms_text = build_sms_text(headers, rows, top5, top10)
-            ok = send_sms(sms_text, sms_to)
-            print(f"{'SMS 발송 완료' if ok else 'SMS 발송 실패'} → {', '.join(sms_to)}")
 
         # ── 카카오톡 발송 ─────────────────────────────────────────────────────
         kakao_to = [n.strip() for n in os.getenv("KAKAO_TO", "").split(",") if n.strip()]
         if kakao_to:
             print("\n카카오톡 발송 중...")
             kakao_text = build_kakao_text(headers, rows, top5, top10)
-            # 대표 차트 1장 (주문금액)만 첨부; 없으면 텍스트만 발송
-            kakao_image = chart_paths_abs.get("order_amount")
-            ok = send_kakao(kakao_text, kakao_to, image_path=kakao_image)
+            ok = send_kakao(kakao_text, kakao_to, image_path=kakao_img_path)
             print(f"{'카카오톡 발송 완료' if ok else '카카오톡 발송 실패'} → {', '.join(kakao_to)}")
 
         # 두레이로 발송

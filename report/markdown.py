@@ -49,17 +49,9 @@ def build_markdown_report(headers, rows, top5, top10, chart_paths=None) -> str:
     lines += ["", "---", ""]
 
     # 주문/클레임 차트
-    lines += ["## 주문/클레임 차트 (최근 2주)", ""]
-    if chart_paths:
-        label_map = {
-            "order_amount": "주문금액",
-            "order_count": "주문수량",
-            "claim": "클레임",
-        }
-        for key in ("order_amount", "order_count", "claim"):
-            if key in chart_paths:
-                label = label_map[key]
-                lines += [f"### {label}", "", f"![{label} 차트]({chart_paths[key]})", ""]
+    lines += ["## 주문/클레임 차트 (최근 3일)", ""]
+    if chart_paths and "charts" in chart_paths:
+        lines += ["![주문/클레임 차트](" + chart_paths["charts"] + ")", ""]
     else:
         lines.append("차트 데이터 없음")
 
