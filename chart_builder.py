@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -33,9 +33,8 @@ def draw_combined_a5(order_data: dict, claim_data: dict | None, fpath: str) -> b
         order_cnt = order_data["orderCnt"][-4:-1]
         can_cnt   = order_data["canCnt"][-4:-1]
         ret_cnt   = order_data["retCnt"][-4:-1]
-        claim_cnt = [c + r for c, r in zip(can_cnt, ret_cnt)]
-
         has_reason = claim_data is not None
+        claim_cnt  = [c + r for c, r in zip(can_cnt, ret_cnt)] if has_reason else [0] * len(xs)
         n_rows     = 4 if has_reason else 3
         heights    = [3, 3, 2, 3] if has_reason else [3, 3, 2]
 
@@ -61,7 +60,7 @@ def draw_combined_a5(order_data: dict, claim_data: dict | None, fpath: str) -> b
         ax0.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
         ax0.tick_params(axis="y", labelsize=7)
         ax0.set_title("주문/취소/반품 금액 (최근 3일)", fontsize=9, pad=3)
-        ax0.legend(fontsize=7, loc="upper right")
+        ax0.legend(fontsize=7, loc="upper left")
 
         ax1 = fig.add_subplot(gs[1])
         for vals, label, color in [
@@ -74,7 +73,7 @@ def draw_combined_a5(order_data: dict, claim_data: dict | None, fpath: str) -> b
         ax1.set_xticks(xs); ax1.set_xticklabels(dates, fontsize=7)
         ax1.tick_params(axis="y", labelsize=7)
         ax1.set_title("주문/취소/반품 건수 (최근 3일)", fontsize=9, pad=3)
-        ax1.legend(fontsize=7, loc="upper right")
+        ax1.legend(fontsize=7, loc="upper left")
 
         ax2 = fig.add_subplot(gs[2])
         bars = ax2.bar(xs, claim_cnt, color="#76b7b2", label="클레임(취소+반품)")
@@ -145,7 +144,7 @@ def draw_report_image(
         ax_title = fig.add_subplot(gs[0])
         ax_title.axis("off")
         ax_title.text(0.5, 0.5,
-                      f"드림몰 Admin 통계  ({datetime.now().strftime('%Y.%m.%d')})",
+                      f"드림몰 Admin 통계  ({(datetime.now() - timedelta(days=1)).strftime('%Y.%m.%d')})",
                       ha="center", va="center",
                       fontsize=14, fontweight="bold", color=C_PRIMARY,
                       transform=ax_title.transAxes)
@@ -251,10 +250,10 @@ def draw_report_image(
             order_amt = order_data["orderAmt"][-4:-1]
             can_amt   = order_data["canAmt"][-4:-1]
             ret_amt   = order_data["retAmt"][-4:-1]
-            order_cnt = order_data["orderCnt"][-4:-1]
-            can_cnt   = order_data["canCnt"][-4:-1]
-            ret_cnt   = order_data["retCnt"][-4:-1]
-            claim_cnt = [c + r for c, r in zip(can_cnt, ret_cnt)]
+            order_cnt  = order_data["orderCnt"][-4:-1]
+            can_cnt    = order_data["canCnt"][-4:-1]
+            ret_cnt    = order_data["retCnt"][-4:-1]
+            claim_cnt  = [c + r for c, r in zip(can_cnt, ret_cnt)] if has_reason else [0] * len(xs)
 
             def _ann(ax, vals, comma=False, offset=7):
                 for i, v in enumerate(vals):
@@ -282,7 +281,7 @@ def draw_report_image(
             ax_amt.set_xmargin(0.15)
             max_amt = max(max(order_amt), max(can_amt), max(ret_amt))
             _clean_chart_spine(ax_amt, "주문/취소/반품 금액 (최근 3일)", max_val=max_amt)
-            ax_amt.legend(fontsize=7.5, loc="upper right", frameon=True, facecolor="#ffffff", edgecolor=C_BORDER)
+            ax_amt.legend(fontsize=7.5, loc="upper left", frameon=True, facecolor="#ffffff", edgecolor=C_BORDER)
 
             # Row 3 Right: 주문/취소/반품 건수
             ax_cnt = fig.add_subplot(gs_r3[1])
@@ -300,7 +299,7 @@ def draw_report_image(
             ax_cnt.set_xmargin(0.15)
             max_cnt = max(max(order_cnt), max(can_cnt), max(ret_cnt))
             _clean_chart_spine(ax_cnt, "주문/취소/반품 건수 (최근 3일)", max_val=max_cnt)
-            ax_cnt.legend(fontsize=7.5, loc="upper right", frameon=True, facecolor="#ffffff", edgecolor=C_BORDER)
+            ax_cnt.legend(fontsize=7.5, loc="upper left", frameon=True, facecolor="#ffffff", edgecolor=C_BORDER)
 
             # Row 3 Left: 클레임 건수 (막대 폭 조정 및 깔끔한 플랫 디자인)
             ax_claim = fig.add_subplot(gs_r3[0])
