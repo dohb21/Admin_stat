@@ -363,8 +363,13 @@ def fetch_claim_chart_data(driver: webdriver.Chrome) -> dict | None:
         )
         resp.raise_for_status()
         raw = resp.json()
-        labels = _parse_csv_strs(raw.get("dashSp",   ""))
-        rates  = _parse_csv_floats(raw.get("dashRate", ""))
+        # API가 배열 형태로 반환하는 경우: [{"dashSp": "기타", "dashRate": "100"}, ...]
+        if isinstance(raw, list):
+            labels = [item.get("dashSp", "") for item in raw if item.get("dashSp")]
+            rates  = [float(item.get("dashRate", 0)) for item in raw if item.get("dashSp")]
+        else:
+            labels = _parse_csv_strs(raw.get("dashSp",   ""))
+            rates  = _parse_csv_floats(raw.get("dashRate", ""))
         if not labels or not rates:
             return None
         return {"labels": labels, "rates": rates}

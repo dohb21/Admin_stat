@@ -1,9 +1,54 @@
+import math
 import os
 from datetime import datetime, timedelta
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
+
+_DONUT_COLORS = ["#14b8a6", "#0284c7", "#f97316", "#ef4444", "#8b5cf6", "#84cc16", "#ec4899"]
+
+
+def _draw_half_donut(ax, labels, rates, title, bg_color="#f1f5f9"):
+    """반원 도넛 차트 그리기. labels/rates가 비어있으면 '데이터 없음' 표시."""
+    ax.axis("off")
+    ax.set_title(title, fontsize=9, fontweight="bold", color="#1e293b", pad=6)
+
+    if not labels or not rates or sum(rates) == 0:
+        ax.text(0.5, 0.5, "데이터 없음", ha="center", va="center",
+                fontsize=9, color="#94a3b8", transform=ax.transAxes)
+        return
+
+    total = sum(rates)
+    # dummy 슬라이스로 하단 반원 채움
+    vals = list(rates) + [total]
+    colors = _DONUT_COLORS[:len(labels)] + [bg_color]
+
+    wedges, _ = ax.pie(
+        vals,
+        colors=colors,
+        startangle=180,
+        counterclock=False,
+        wedgeprops=dict(width=0.46, edgecolor="white", linewidth=1.5),
+    )
+    wedges[-1].set_alpha(0)  # dummy 슬라이스 숨김
+
+    # 각 슬라이스 중앙에 항목명 + 비율 텍스트
+    for wedge, label, rate in zip(wedges[:-1], labels, rates):
+        mid_angle = (wedge.theta1 + wedge.theta2) / 2
+        rad = math.radians(mid_angle)
+        r = 0.71
+        x, y = r * math.cos(rad), r * math.sin(rad)
+        short = label[:6] + "…" if len(label) > 6 else label
+        ax.text(x, y, f"{short}\n{rate:.1f}%",
+                ha="center", va="center", fontsize=6.5,
+                color="white", fontweight="bold",
+                multialignment="center")
+
+    # 상단 반원만 보이도록 y 범위 제한
+    ax.set_xlim(-1.15, 1.15)
+    ax.set_ylim(-0.08, 1.12)
+    ax.set_aspect("equal")
 
 
 def _setup_korean_font() -> None:
@@ -85,12 +130,7 @@ def draw_combined_a5(order_data: dict, claim_data: dict | None, fpath: str) -> b
 
         if has_reason:
             ax3 = fig.add_subplot(gs[3])
-            bars = ax3.barh(claim_data["labels"], claim_data["rates"], color="#59a14f")
-            ax3.bar_label(bars, fmt="%.1f%%", padding=2, fontsize=7)
-            ax3.tick_params(axis="y", labelsize=7)
-            ax3.tick_params(axis="x", labelsize=7)
-            ax3.set_xlabel("비율 (%)", fontsize=7)
-            ax3.set_title("클레임 사유 TOP5", fontsize=9, pad=3)
+            _draw_half_donut(ax3, claim_data["labels"], claim_data["rates"], "클레임 사유 TOP5")
 
         fig.savefig(fpath, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -301,14 +341,11 @@ def draw_report_image(
             _clean_chart_spine(ax_cnt, "주문/취소/반품 건수 (최근 3일)", max_val=max_cnt)
             ax_cnt.legend(fontsize=7.5, loc="upper left", frameon=True, facecolor="#ffffff", edgecolor=C_BORDER)
 
-            # Row 3 Left: 클레임 건수 (막대 폭 조정 및 깔끔한 플랫 디자인)
+            # Row 3 Left: 클레임 사유 반원 도넛 차트
             ax_claim = fig.add_subplot(gs_r3[0])
             if has_reason:
-                bars = ax_claim.barh(claim_data["labels"], claim_data["rates"], color=C_CLAIM, height=0.5)
-                ax_claim.bar_label(bars, fmt="%.1f%%", padding=4, fontsize=8, color=C_TEXT_MAIN)
-                ax_claim.tick_params(axis="both", labelsize=8)
-                _clean_chart_spine(ax_claim, "클레임 사유 TOP5")
-                ax_claim.set_xlabel("비율 (%)", fontsize=8, color=C_TEXT_MAIN)
+                _draw_half_donut(ax_claim, claim_data["labels"], claim_data["rates"],
+                                 "클레임 사유 TOP5", bg_color="#f1f5f9")
             else:
                 bars = ax_claim.bar(xs, claim_cnt, color=C_CLAIM, width=0.35, label="클레임(취소+반품)")
                 ax_claim.bar_label(bars, padding=4, fontsize=8, fontweight="bold", color=C_TEXT_MAIN)

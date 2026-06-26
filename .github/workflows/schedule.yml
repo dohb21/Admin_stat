@@ -2,8 +2,8 @@ name: 드림몰 Admin 통계
 
 on:
   schedule:
-    # 매일 0:02 UTC (한국 시간으로 09:02)에 실행
-    - cron: '2 0 * * *'
+    # 매일 23:02 UTC (한국 시간으로 08:02)에 실행
+    - cron: '2 23 * * *'
   workflow_dispatch:
 
 jobs:
