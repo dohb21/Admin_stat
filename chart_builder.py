@@ -347,14 +347,13 @@ def draw_report_image(
                 _draw_half_donut(ax_claim, claim_data["labels"], claim_data["rates"],
                                  "클레임 사유 TOP5", bg_color="#f1f5f9")
             else:
-                bars = ax_claim.bar(xs, claim_cnt, color=C_CLAIM, width=0.35, label="클레임(취소+반품)")
-                ax_claim.bar_label(bars, padding=4, fontsize=8, fontweight="bold", color=C_TEXT_MAIN)
-                ax_claim.set_xticks(xs)
-                ax_claim.set_xticklabels(dates, fontsize=8)
-                ax_claim.tick_params(axis="both", labelsize=8)
-                is_zero = sum(claim_cnt) == 0
-                max_claim = max(claim_cnt) if not is_zero else 0
-                _clean_chart_spine(ax_claim, "클레임 건수 (최근 3일)", max_val=max_claim, is_all_zero=is_zero)
+                ax_claim.axis("off")
+                ax_claim.set_title("클레임 사유 TOP5", fontsize=10, fontweight="bold",
+                                   color=C_PRIMARY, pad=10)
+                ax_claim.axhline(y=0.5, xmin=0.05, xmax=0.45, color=C_BORDER,
+                                 linewidth=1.2, transform=ax_claim.transAxes)
+                ax_claim.text(0.5, 0.45, "데이터 없음", ha="center", va="center",
+                              fontsize=9, color="#94a3b8", transform=ax_claim.transAxes)
 
         # 저장 포맷 최적화 (배경색 투명화 방지 및 선명도 확보)
         fig.savefig(fpath, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
