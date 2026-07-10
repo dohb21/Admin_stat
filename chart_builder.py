@@ -11,11 +11,13 @@ _DONUT_COLORS = ["#14b8a6", "#0284c7", "#f97316", "#ef4444", "#8b5cf6", "#84cc16
 
 def _draw_half_donut(ax, labels, rates, title, bg_color="#f1f5f9"):
     """반원 도넛 차트 그리기. labels/rates가 비어있으면 '데이터 없음' 표시."""
-    ax.axis("off")
-    ax.set_title(title, fontsize=9, fontweight="bold", color="#1e293b", pad=6)
-
+    # 데이터 없는 경우 — 깔끔한 빈 상태
     if not labels or not rates or sum(rates) == 0:
-        ax.text(0.5, 0.5, "데이터 없음", ha="center", va="center",
+        ax.axis("off")
+        ax.set_title(title, fontsize=9, fontweight="bold", color="#1e293b", pad=6)
+        ax.plot([0.05, 0.45], [0.5, 0.5], color="#cbd5e1",
+                linewidth=1.2, transform=ax.transAxes, clip_on=False)
+        ax.text(0.5, 0.42, "데이터 없음", ha="center", va="center",
                 fontsize=9, color="#94a3b8", transform=ax.transAxes)
         return
 
@@ -24,6 +26,7 @@ def _draw_half_donut(ax, labels, rates, title, bg_color="#f1f5f9"):
     vals = list(rates) + [total]
     colors = _DONUT_COLORS[:len(labels)] + [bg_color]
 
+    # pie() 먼저 그린 후 axis/limit 조정 (GridSpec 충돌 방지)
     wedges, _ = ax.pie(
         vals,
         colors=colors,
@@ -45,10 +48,9 @@ def _draw_half_donut(ax, labels, rates, title, bg_color="#f1f5f9"):
                 color="white", fontweight="bold",
                 multialignment="center")
 
-    # 상단 반원만 보이도록 y 범위 제한
-    ax.set_xlim(-1.15, 1.15)
-    ax.set_ylim(-0.08, 1.12)
-    ax.set_aspect("equal")
+    # 상단 반원만 보이도록 y 범위 제한 (set_aspect는 pie()가 이미 설정)
+    ax.set_ylim(-0.05, 1.1)
+    ax.set_title(title, fontsize=9, fontweight="bold", color="#1e293b", pad=6)
 
 
 def _setup_korean_font() -> None:
@@ -350,8 +352,8 @@ def draw_report_image(
                 ax_claim.axis("off")
                 ax_claim.set_title("클레임 사유 TOP5", fontsize=10, fontweight="bold",
                                    color=C_PRIMARY, pad=10)
-                ax_claim.axhline(y=0.5, xmin=0.05, xmax=0.45, color=C_BORDER,
-                                 linewidth=1.2, transform=ax_claim.transAxes)
+                ax_claim.plot([0.05, 0.45], [0.5, 0.5], color=C_BORDER,
+                              linewidth=1.2, transform=ax_claim.transAxes, clip_on=False)
                 ax_claim.text(0.5, 0.45, "데이터 없음", ha="center", va="center",
                               fontsize=9, color="#94a3b8", transform=ax_claim.transAxes)
 
