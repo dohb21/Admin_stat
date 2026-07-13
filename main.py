@@ -215,10 +215,16 @@ def fetch_summary_table(driver: webdriver.Chrome):
             return str(row.get("daTotal", ""))
 
     keys = ["name", "d3Total", "d2Total", "d1Total"]
-    rows = [
-        [str(row.get(k, "")) for k in keys] + [_monthly_excl_today(row)]
-        for row in data.get("rows", [])
-    ]
+    raw_rows = data.get("rows", [])
+    monthly_by_name = {row.get("name"): _monthly_excl_today(row) for row in raw_rows}
+
+    rows = []
+    for row in raw_rows:
+        name = row.get("name")
+        # 누적회원은 신규회원의 당월 누적 계산값을 그대로 사용
+        monthly = monthly_by_name.get("신규회원", "") if name == "누적회원" else monthly_by_name[name]
+        rows.append([str(row.get(k, "")) for k in keys] + [monthly])
+
     return col_headers, rows
 
 
