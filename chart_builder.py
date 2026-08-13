@@ -1,6 +1,8 @@
 import math
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+_KST = timezone(timedelta(hours=9))
 
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
@@ -186,7 +188,7 @@ def draw_report_image(
         ax_title = fig.add_subplot(gs[0])
         ax_title.axis("off")
         ax_title.text(0.5, 0.5,
-                      f"드림몰 Admin 통계  ({(datetime.now() - timedelta(days=1)).strftime('%Y.%m.%d')})",
+                      f"드림몰 Admin 통계  ({(datetime.now(_KST) - timedelta(days=1)).strftime('%Y.%m.%d')})",
                       ha="center", va="center",
                       fontsize=14, fontweight="bold", color=C_PRIMARY,
                       transform=ax_title.transAxes)

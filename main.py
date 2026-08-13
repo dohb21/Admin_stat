@@ -5,7 +5,9 @@ sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
 
 import requests as _req
 from bs4 import BeautifulSoup
@@ -24,6 +26,7 @@ from report import (
     build_report_image_html, send_email,
     build_kakao_text, send_kakao,
 )
+from report.sales import build_sales_email_html, attach_excel
 
 load_dotenv()
 
@@ -199,7 +202,7 @@ def fetch_summary_table(driver: webdriver.Chrome):
     resp.raise_for_status()
     data = resp.json()
 
-    today = datetime.now()
+    today = datetime.now(KST)
     col_headers = ["구분",
                    (today - timedelta(days=3)).strftime("%m/%d"),
                    (today - timedelta(days=2)).strftime("%m/%d"),
@@ -447,13 +450,300 @@ def save_html_as_pdf(driver: webdriver.Chrome, html_content: str, pdf_path: str)
             os.unlink(tmp_path)
 
 
+# ── 매출 통계 설정 ───────────────────────────────────────────────────────────
+_B2C_BASE = BASE_URL                                        # B2C 어드민
+_B2B_BASE = "https://admin2410.pobaonuri.kr"                # B2B 어드민
+_SALES_PATH = "/statistics/salesStatsGrid.do"
+
+
+def _sales_period(period_type: str):
+    """KST 기준 직전 주/월 기간 반환 (start, end) — date 객체
+    weekly: 실행 요일과 무관하게 직전 주 월~일
+    monthly: 실행 일자와 무관하게 직전 달 1일~말일
+    """
+    today = datetime.now(KST).date()
+    if period_type == "weekly":
+        # 이번 주 월요일 = today - weekday (월=0)
+        this_monday = today - timedelta(days=today.weekday())
+        end   = this_monday - timedelta(days=1)   # 직전 주 일요일
+        start = this_monday - timedelta(days=7)   # 직전 주 월요일
+    else:
+        first = today.replace(day=1)
+        end   = first - timedelta(days=1)   # 전월 말일
+        start = end.replace(day=1)          # 전월 1일
+    return start, end
+
+
+def _b2b_login_selenium(driver: webdriver.Chrome) -> dict | None:
+    """Selenium으로 B2B 어드민 로그인 후 쿠키 dict 반환. 실패 시 None."""
+    b2b_user = os.getenv("B2B_ADMIN_USER", "")
+    b2b_pass = os.getenv("B2B_ADMIN_PASS", "")
+    if not b2b_user or not b2b_pass:
+        print("[B2B] B2B_ADMIN_USER / B2B_ADMIN_PASS 설정 필요")
+        return None
+
+    original_url = driver.current_url
+    try:
+        driver.get(f"{_B2B_BASE}/main/mainView.do")
+        time.sleep(2)
+        dismiss_alert(driver)
+
+        if "mainView" in driver.current_url:
+            print("[B2B] 로그인 성공")
+            return _cookies(driver)
+
+        user_el = find_field(driver, _USER_CANDIDATES)
+        pass_el = find_field(driver, _PASS_CANDIDATES)
+        if not user_el or not pass_el:
+            print(f"[B2B] 로그인 폼 필드 미발견 (현재 URL: {driver.current_url})")
+            return None
+
+        user_el.clear(); user_el.send_keys(b2b_user)
+        pass_el.clear(); pass_el.send_keys(b2b_pass)
+
+        submit_btn = None
+        for sel in ["button[type='submit']", "input[type='submit']",
+                    "button.btnLogin", ".btn-login"]:
+            try:
+                submit_btn = driver.find_element(By.CSS_SELECTOR, sel)
+                break
+            except NoSuchElementException:
+                continue
+        if not submit_btn:
+            for xp in ["//button[contains(.,'로그인')]", "//button"]:
+                try:
+                    submit_btn = driver.find_element(By.XPATH, xp)
+                    break
+                except NoSuchElementException:
+                    continue
+        if submit_btn:
+            submit_btn.click()
+        else:
+            from selenium.webdriver.common.keys import Keys
+            pass_el.send_keys(Keys.RETURN)
+
+        time.sleep(3)
+        dismiss_alert(driver)
+
+        if "mainView" not in driver.current_url:
+            print(f"[B2B] 로그인 실패 (URL: {driver.current_url})")
+            return None
+
+        print("[B2B] 로그인 성공")
+        return _cookies(driver)
+    except Exception as e:
+        print(f"[B2B 로그인 예외] {e}")
+        return None
+    finally:
+        driver.get(original_url)
+        time.sleep(1)
+
+
+_SALES_EXCEL_PATH = "/statistics/salesStatsExcelDownload.do"
+
+
+def _call_sales_api(session, base_url: str, start, end,
+                    gbc: str, period_type: str) -> list[dict]:
+    """salesStatsGrid.do 호출 → parsed rows 반환 (jqGrid 전체 파라미터 세트 사용)"""
+    from report.sales import parse_sales_rows
+    period_code = "WEEK" if period_type == "weekly" else "MONTH"
+    start_str = start.strftime("%Y-%m-%d")
+    end_str   = end.strftime("%Y-%m-%d")
+    try:
+        resp = session.post(
+            f"{base_url}{_SALES_PATH}",
+            data={
+                "startDt":       start_str,
+                "endDt":         end_str,
+                "startDt1":      start_str,
+                "endDt1":        end_str,
+                "gbCd":          gbc,
+                "periodType":    period_code,
+                "stId":          "",
+                "stIdSelectRaw": "",
+                "_search":       "false",
+                "nd":            str(int(time.time() * 1000)),
+                "rows":          "-1",
+                "page":          "1",
+                "sidx":          "periodNm asc, periodNm",
+                "sord":          "desc",
+            },
+            timeout=15,
+        )
+        resp.raise_for_status()
+        body = resp.json()
+        items = body.get("data", [])
+        print(f"[DEBUG {gbc}] 응답 행 수: {len(items)}, 첫 행: {items[0] if items else '없음'}")
+        return parse_sales_rows(items)
+    except Exception as e:
+        print(f"[매출통계] API 실패 ({base_url}, gbCd={gbc}): {e}")
+        return []
+
+
+def _download_b2b_excel(session, base_url: str, start, end,
+                        period_type: str, filepath: str) -> bool:
+    """B2B 몰별 엑셀 다운로드 버튼과 동일한 엔드포인트 호출 → 파일 저장"""
+    period_code = "WEEK" if period_type == "weekly" else "MONTH"
+    start_str = start.strftime("%Y-%m-%d")
+    end_str   = end.strftime("%Y-%m-%d")
+    try:
+        resp = session.post(
+            f"{base_url}{_SALES_EXCEL_PATH}",
+            data={
+                "startDt":       start_str,
+                "endDt":         end_str,
+                "startDt1":      start_str,
+                "endDt1":        end_str,
+                "gbCd":          "B2B_SITE",
+                "periodType":    period_code,
+                "stId":          "",
+                "stIdSelectRaw": "",
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        content_type = resp.headers.get("Content-Type", "")
+        if "excel" in content_type or "spreadsheet" in content_type or "octet-stream" in content_type:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, "wb") as f:
+                f.write(resp.content)
+            print(f"[B2B] 엑셀 다운로드 완료: {filepath}")
+            return True
+        else:
+            print(f"[B2B] 엑셀 다운로드 실패 — Content-Type: {content_type}, 응답: {resp.text[:200]}")
+            return False
+    except Exception as e:
+        print(f"[B2B] 엑셀 다운로드 예외: {e}")
+        return False
+
+
+def fetch_sales_stats(driver: webdriver.Chrome, period_type: str):
+    """B2C + B2B 매출 통계 수집. (b2c_rows, b2b_rows, start, end) 반환"""
+    start, end = _sales_period(period_type)
+
+    # B2C: selenium 쿠키를 requests에 넘겨 직접 호출
+    cookies = _cookies(driver)
+
+    _sales_headers = {
+        "Referer": f"{_B2C_BASE}/statistics/salesStatsView.do",
+        "X-Requested-With": "XMLHttpRequest",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Origin": _B2C_BASE,
+    }
+
+    class _B2CSess:
+        def post(self, url, data=None, timeout=15, **kw):
+            resp = _req.post(url, data=data, headers=_sales_headers,
+                             cookies=cookies, timeout=timeout)
+            if not resp.ok:
+                print(f"[B2C 응답 {resp.status_code}] {resp.text[:500]}")
+            return resp
+
+    b2c_rows = _call_sales_api(_B2CSess(), _B2C_BASE, start, end, "B2C", period_type)
+
+    # B2B: B2C와 동일하게 selenium으로 로그인 후 쿠키를 requests에 사용
+    b2b_cookies = _b2b_login_selenium(driver)
+    b2b_sess = None
+    b2b_base = _B2B_BASE
+    if b2b_cookies:
+        b2b_headers = {
+            "Referer": f"{_B2B_BASE}/statistics/salesStatsView.do",
+            "X-Requested-With": "XMLHttpRequest",
+            "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+            "Origin": _B2B_BASE,
+        }
+
+        class _B2BSess:
+            def post(self, url, data=None, timeout=15, **kw):
+                resp = _req.post(url, data=data, headers=b2b_headers,
+                                 cookies=b2b_cookies, timeout=timeout)
+                if not resp.ok:
+                    print(f"[B2B 응답 {resp.status_code}] {resp.text[:500]}")
+                return resp
+
+        b2b_sess = _B2BSess()
+        b2b_rows = _call_sales_api(b2b_sess, b2b_base, start, end, "B2B_TOTAL", period_type)
+        print(f"[B2B] TOTAL {len(b2b_rows)}행")
+    else:
+        b2b_rows = []
+
+    return b2c_rows, b2b_rows, b2b_sess, b2b_base, start, end
+
+
+def send_sales_report(driver: webdriver.Chrome, period_type: str) -> None:
+    """매출 통계 이메일 조합 및 발송"""
+    import smtplib
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    label = "주간" if period_type == "weekly" else "월간"
+    print(f"\n매출 통계 {label} 리포트 생성 중...")
+
+    b2c_rows, b2b_rows, b2b_sess, b2b_base, start, end = fetch_sales_stats(driver, period_type)
+
+    if not b2c_rows and not b2b_rows:
+        print(f"[매출통계] 데이터 없음 — {label} 발송 스킵")
+        return
+
+    html = build_sales_email_html(period_type, start, end, b2c_rows, b2b_rows)
+
+    # B2B 몰별 엑셀 다운로드
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    date_str   = datetime.now(KST).strftime("%Y%m%d")
+    excel_path = os.path.join(OUTPUT_DIR, f"B2B_매출통계_{date_str}.xlsx")
+    excel_ok   = False
+    if b2b_sess:
+        excel_ok = _download_b2b_excel(b2b_sess, b2b_base, start, end, period_type, excel_path)
+    else:
+        print("[매출통계] B2B 세션 없음 — Excel 첨부 생략")
+
+    period_ko = f"{start.strftime('%m월 %d일')}~{end.strftime('%m월 %d일')}"
+    subject   = f"[온누리몰] {label} 매출 통계 - {start.strftime('%Y년')} {period_ko}"
+
+    sales_to = [a.strip() for a in
+                os.getenv("SALES_EMAIL_TO", os.getenv("EMAIL_TO", "")).split(",")
+                if a.strip()]
+    if not sales_to:
+        print("[매출통계] 수신자 없음 (SALES_EMAIL_TO 또는 EMAIL_TO 설정 필요)")
+        return
+
+    smtp_host = os.getenv("EMAIL_SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.getenv("EMAIL_SMTP_PORT", "587"))
+    from_addr = os.getenv("EMAIL_FROM", "")
+    password  = os.getenv("EMAIL_PASSWORD", "")
+
+    if not from_addr or not password:
+        print("[매출통계] 이메일 설정 없음")
+        return
+
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"]    = from_addr
+    msg["To"]      = ", ".join(sales_to)
+    msg.attach(MIMEText(html, "html", "utf-8"))
+
+    if excel_ok:
+        attach_excel(msg, excel_path, os.path.basename(excel_path))
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as srv:
+            srv.ehlo(); srv.starttls()
+            srv.login(from_addr, password)
+            srv.sendmail(from_addr, sales_to, msg.as_bytes())
+        print(f"매출통계 {label} 이메일 발송 완료 → {', '.join(sales_to)}")
+    except Exception as e:
+        print(f"매출통계 {label} 이메일 발송 실패: {e}")
+
+
 def main() -> None:
     if not USERNAME or not PASSWORD:
         print("오류: .env 파일에 ADMIN_USER와 ADMIN_PASS를 설정하세요.")
         sys.exit(1)
 
-    debug = "--debug" in sys.argv
-    headless = "--show" not in sys.argv  # --show 옵션으로 브라우저 창을 표시
+    debug    = "--debug" in sys.argv
+    headless = "--show" not in sys.argv
+    force_weekly  = "--sales-weekly"  in sys.argv
+    force_monthly = "--sales-monthly" in sys.argv
 
     driver = setup_driver(headless=headless)
     wait = WebDriverWait(driver, 25)
@@ -465,64 +755,81 @@ def main() -> None:
         wait.until(lambda d: d.execute_script("return document.readyState") == "complete")
         time.sleep(5)  # easyui 초기화 및 JS 함수 등록 대기
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(KST).strftime("%Y%m%d_%H%M%S")
 
-        print("Summary 데이터 수집 중...")
-        headers, rows = fetch_summary_table(driver)
+        sales_only = force_weekly or force_monthly
 
-        print("상품/키워드 데이터 수집 중...")
-        top5, top10 = fetch_lists_from_page(driver, debug=debug)
+        # ── 매출 통계 이메일 (--sales-weekly / --sales-monthly 플래그) ──────────
+        if sales_only:
+            today_kst = datetime.now(KST)
+            if force_weekly:
+                send_sales_report(driver, "weekly")
+            if force_monthly:
+                send_sales_report(driver, "monthly")
+        else:
+            print("Summary 데이터 수집 중...")
+            headers, rows = fetch_summary_table(driver)
 
-        print("주문/클레임 차트 생성 중...")
-        chart_paths_abs, order_data, claim_data = fetch_order_claim_charts(
-            driver, timestamp, OUTPUT_DIR, debug=debug
-        )
-        chart_paths = {
-            k: os.path.relpath(v, OUTPUT_DIR).replace("\\", "/")
-            for k, v in chart_paths_abs.items()
-        }
+            print("상품/키워드 데이터 수집 중...")
+            top5, top10 = fetch_lists_from_page(driver, debug=debug)
 
-        # 카카오톡 전송용 리포트 이미지 생성
-        kakao_img_path = os.path.join(OUTPUT_DIR, "charts", f"{timestamp}_kakao.png")
-        kakao_ok = draw_report_image(
-            headers, rows, top5, top10, order_data, claim_data, kakao_img_path
-        )
-        if not kakao_ok:
-            kakao_img_path = None
-
-        # PDF 생성
-        html_report = build_html_report(headers, rows, top5, top10, chart_paths=chart_paths)
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
-        pdf_path = os.path.join(OUTPUT_DIR, f"dream_{timestamp[:8]}.pdf")
-        print("PDF 생성 중...")
-        try:
-            save_html_as_pdf(driver, html_report, pdf_path)
-            print(f"리포트 생성 완료: {pdf_path}")
-        except Exception as e:
-            print(f"PDF 생성 실패: {e}")
-
-        today_str = (datetime.now() - timedelta(days=1)).strftime("%Y년 %m월 %d일")
-
-        # ── 이메일 발송 ────────────────────────────────────────────────────────
-        email_to = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
-        if email_to:
-            print("\n이메일 발송 중...")
-            email_html = build_report_image_html()
-            ok = send_email(
-                subject=f"[드림몰] Admin 통계 리포트 - {today_str}",
-                html_body=email_html,
-                to_addrs=email_to,
-                chart_paths={"report": kakao_img_path} if kakao_img_path else {},
+            print("주문/클레임 차트 생성 중...")
+            chart_paths_abs, order_data, claim_data = fetch_order_claim_charts(
+                driver, timestamp, OUTPUT_DIR, debug=debug
             )
-            print(f"{'이메일 발송 완료' if ok else '이메일 발송 실패'} → {', '.join(email_to)}")
+            chart_paths = {
+                k: os.path.relpath(v, OUTPUT_DIR).replace("\\", "/")
+                for k, v in chart_paths_abs.items()
+            }
 
-        # ── 카카오톡 발송 ─────────────────────────────────────────────────────
-        kakao_to = [n.strip() for n in os.getenv("KAKAO_TO", "").split(",") if n.strip()]
-        if kakao_to:
-            print("\n카카오톡 발송 중...")
-            kakao_text = build_kakao_text(headers, rows, top5, top10)
-            ok = send_kakao(kakao_text, kakao_to, image_path=kakao_img_path)
-            print(f"{'카카오톡 발송 완료' if ok else '카카오톡 발송 실패'} → {', '.join(kakao_to)}")
+            # 카카오톡 전송용 리포트 이미지 생성
+            kakao_img_path = os.path.join(OUTPUT_DIR, "charts", f"{timestamp}_kakao.png")
+            kakao_ok = draw_report_image(
+                headers, rows, top5, top10, order_data, claim_data, kakao_img_path
+            )
+            if not kakao_ok:
+                kakao_img_path = None
+
+            # PDF 생성
+            html_report = build_html_report(headers, rows, top5, top10, chart_paths=chart_paths)
+            os.makedirs(OUTPUT_DIR, exist_ok=True)
+            pdf_path = os.path.join(OUTPUT_DIR, f"dream_{timestamp[:8]}.pdf")
+            print("PDF 생성 중...")
+            try:
+                save_html_as_pdf(driver, html_report, pdf_path)
+                print(f"리포트 생성 완료: {pdf_path}")
+            except Exception as e:
+                print(f"PDF 생성 실패: {e}")
+
+            # ── 매출 통계 이메일 (스케줄: 월요일=주간, 매달 1일=월간) ──────────
+            today_kst = datetime.now(KST)
+            if today_kst.weekday() == 0:
+                send_sales_report(driver, "weekly")
+            if today_kst.day == 1:
+                send_sales_report(driver, "monthly")
+
+            today_str = (datetime.now(KST) - timedelta(days=1)).strftime("%Y년 %m월 %d일")
+
+            # ── 일일 Admin 통계 이메일 ────────────────────────────────────────
+            email_to = [a.strip() for a in os.getenv("EMAIL_TO", "").split(",") if a.strip()]
+            if email_to:
+                print("\n이메일 발송 중...")
+                email_html = build_report_image_html()
+                ok = send_email(
+                    subject=f"[드림몰] Admin 통계 리포트 - {today_str}",
+                    html_body=email_html,
+                    to_addrs=email_to,
+                    chart_paths={"report": kakao_img_path} if kakao_img_path else {},
+                )
+                print(f"{'이메일 발송 완료' if ok else '이메일 발송 실패'} → {', '.join(email_to)}")
+
+            # ── 카카오톡 발송 ─────────────────────────────────────────────────
+            kakao_to = [n.strip() for n in os.getenv("KAKAO_TO", "").split(",") if n.strip()]
+            if kakao_to:
+                print("\n카카오톡 발송 중...")
+                kakao_text = build_kakao_text(headers, rows, top5, top10)
+                ok = send_kakao(kakao_text, kakao_to, image_path=kakao_img_path)
+                print(f"{'카카오톡 발송 완료' if ok else '카카오톡 발송 실패'} → {', '.join(kakao_to)}")
 
         # 두레이로 발송
         # dooray_config = get_dooray_config()

@@ -3,7 +3,9 @@ import smtplib
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+
+_KST = timezone(timedelta(hours=9))
 
 # chart_paths_abs 의 key → CID 매핑
 _CID = {
@@ -18,7 +20,7 @@ _CHART_LABEL = {
 def build_email_html(
     headers: list, rows: list, top5: list, top10: list, chart_keys: list = None
 ) -> str:
-    today = (datetime.now() - timedelta(days=1)).strftime("%Y년 %m월 %d일")
+    today = (datetime.now(_KST) - timedelta(days=1)).strftime("%Y년 %m월 %d일")
     chart_keys = chart_keys or []
 
     th_cells = "".join(f"<th>{h}</th>" for h in headers)
@@ -105,7 +107,7 @@ def build_email_html(
 
 
 def build_report_image_html() -> str:
-    today = (datetime.now() - timedelta(days=1)).strftime("%Y년 %m월 %d일")
+    today = (datetime.now(_KST) - timedelta(days=1)).strftime("%Y년 %m월 %d일")
     return f"""<!DOCTYPE html>
 <html lang="ko">
 <head>

@@ -45,6 +45,9 @@ jobs:
           SOLAPI_FROM_NUMBER: ${{ secrets.SOLAPI_FROM_NUMBER }}
           KAKAO_CHANNEL_ID: ${{ secrets.KAKAO_CHANNEL_ID }}
           KAKAO_TO: ${{ secrets.KAKAO_TO }}
+          B2B_ADMIN_USER: ${{ secrets.B2B_ADMIN_USER }}
+          B2B_ADMIN_PASS: ${{ secrets.B2B_ADMIN_PASS }}
+          SALES_EMAIL_TO: ${{ secrets.SALES_EMAIL_TO }}
         run: python main.py
 
       - name: Upload reports
